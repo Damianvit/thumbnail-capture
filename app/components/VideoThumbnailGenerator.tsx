@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from "react";
 import Cropper from "react-easy-crop";
 import { getCroppedImg } from "@/app/utils/cropper";
 import { Area } from "react-easy-crop";
+import Image from "next/image";
 
 export default function VideoThumbnailGenerator({
     videoUrl,
@@ -25,7 +26,7 @@ export default function VideoThumbnailGenerator({
         setCroppedAreaPixels(croppedPixels);
     }, []);
 
-    const captureCurrentFrame = () => {
+    const captureCurrentFrame = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
 
@@ -41,28 +42,32 @@ export default function VideoThumbnailGenerator({
             setCapturedImage(dataURL);
             setShowCropper(true);
         }
-    };
+    }, []);
 
-    const captureFrameAtTime = (time: number = 5) => {
-        const video = videoRef.current;
-        if (!video) return;
+    const captureFrameAtTime = useCallback(
+        (time: number = 5) => {
+            const video = videoRef.current;
+            if (!video) return;
 
-        video.currentTime = time;
-        video.pause();
+            const handleSeeked = () => {
+                captureCurrentFrame();
+                video.removeEventListener("seeked", handleSeeked);
+            };
 
-        video.onseeked = () => {
-            captureCurrentFrame();
-        };
-    };
+            video.addEventListener("seeked", handleSeeked);
+            video.currentTime = time;
+            video.pause();
+        },
+        [captureCurrentFrame]
+    );
 
     useEffect(() => {
-        // Auto capture frame at 5s when component mounts
         const timeout = setTimeout(() => {
             captureFrameAtTime(5);
         }, 500);
 
         return () => clearTimeout(timeout);
-    }, []);
+    }, [captureFrameAtTime]);
 
     const generateThumbnail = async () => {
         if (!capturedImage || !croppedAreaPixels) return;
@@ -117,10 +122,12 @@ export default function VideoThumbnailGenerator({
             {thumbnailSrc && (
                 <div>
                     <h3 className="font-semibold">Generated Thumbnail:</h3>
-                    <img
+                    <Image
                         src={thumbnailSrc}
                         alt="Generated Thumbnail"
-                        className="w-[300px] border rounded shadow"
+                        width={300}
+                        height={158} // 300 * (630 / 1200)
+                        className="border rounded shadow"
                     />
                 </div>
             )}
