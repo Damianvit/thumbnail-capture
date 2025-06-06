@@ -1,170 +1,131 @@
-"use client";
+import React, { useRef, useState, useCallback, useEffect } from "react";
+import Cropper from "react-easy-crop";
+import { getCroppedImg } from "@/app/utils/cropper";
+import { Area } from "react-easy-crop";
 
-import { useEffect, useRef, useState } from "react";
-
-type Props = {
+export default function VideoThumbnailGenerator({
+    videoUrl,
+}: {
     videoUrl: string;
-};
-
-export default function VideoThumbnailGenerator() {
+}) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    const [thumbnail, setThumbnail] = useState<string | null>(null);
-    const [captured, setCaptured] = useState(false);
-    const [timestamp, setTimestamp] = useState(5); // default is 5s
-    const [manualCapture, setManualCapture] = useState(false);
-    const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
-    const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(null);
+    const [capturedImage, setCapturedImage] = useState<string | null>(null);
+    const [showCropper, setShowCropper] = useState(false);
 
-        const url = URL.createObjectURL(file);
-        setVideoUrl(url);
-        setThumbnail(null); // Reset thumbnail if new video is uploaded
-    };
-    useEffect(() => {
-        if (!videoUrl) return;
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(
+        null
+    );
 
+    const onCropComplete = useCallback((_: Area, croppedPixels: Area) => {
+        setCroppedAreaPixels(croppedPixels);
+    }, []);
+
+    const captureCurrentFrame = () => {
         const video = videoRef.current;
         if (!video) return;
 
-        const handleLoadedMetadata = () => {
-            if (video.duration >= 5) {
-                video.currentTime = 5;
-            } else {
-                video.currentTime = Math.floor(video.duration / 2);
-            }
-        };
-
-        const handleSeeked = () => {
-            if (manualCapture || !captured) {
-                captureFrame();
-                setCaptured(true);
-                setManualCapture(false);
-            }
-        };
-
-        video.addEventListener("loadedmetadata", handleLoadedMetadata);
-        video.addEventListener("seeked", handleSeeked);
-
-        return () => {
-            video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-            video.removeEventListener("seeked", handleSeeked);
-        };
-    }, [videoUrl, captured, manualCapture]);
-
-    const captureFrame = () => {
-        const video = videoRef.current;
         const canvas = canvasRef.current;
-        if (!video || !canvas) return;
+        if (!canvas) return;
 
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
         const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        // Target size for Open Graph and WhatsApp meta: 1200 x 630
-        const targetWidth = 1200;
-        const targetHeight = 630;
-
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-
-        const scale = Math.min(
-            video.videoWidth / targetWidth,
-            video.videoHeight / targetHeight
-        );
-
-        const drawWidth = targetWidth * scale;
-        const drawHeight = targetHeight * scale;
-
-        const offsetX = (video.videoWidth - drawWidth) / 2;
-        const offsetY = (video.videoHeight - drawHeight) / 2;
-
-        ctx.drawImage(
-            video,
-            offsetX,
-            offsetY,
-            drawWidth,
-            drawHeight,
-            0,
-            0,
-            targetWidth,
-            targetHeight
-        );
-
-        const imageData = canvas.toDataURL("image/jpeg", 0.9);
-        setThumbnail(imageData);
+        if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const dataURL = canvas.toDataURL("image/jpeg");
+            setCapturedImage(dataURL);
+            setShowCropper(true);
+        }
     };
 
-    const handleCustomCapture = () => {
+    const captureFrameAtTime = (time: number = 5) => {
         const video = videoRef.current;
-        if (!video || isNaN(timestamp)) return;
+        if (!video) return;
 
-        // Clamp to video duration
-        const safeTimestamp = Math.min(timestamp, video.duration);
-        setManualCapture(true);
-        video.currentTime = safeTimestamp;
+        video.currentTime = time;
+        video.pause();
+
+        video.onseeked = () => {
+            captureCurrentFrame();
+        };
     };
 
-    // This function allows capturing the current frame while the video is playing.
-    const handleAnalogCapture = () => {
-        captureFrame();
+    useEffect(() => {
+        // Auto capture frame at 5s when component mounts
+        const timeout = setTimeout(() => {
+            captureFrameAtTime(5);
+        }, 500);
+
+        return () => clearTimeout(timeout);
+    }, []);
+
+    const generateThumbnail = async () => {
+        if (!capturedImage || !croppedAreaPixels) return;
+
+        const croppedImg = await getCroppedImg(
+            capturedImage,
+            croppedAreaPixels,
+            1200,
+            630
+        );
+        setThumbnailSrc(croppedImg);
+        setShowCropper(false);
     };
 
     return (
-        <div className="flex flex-col gap-4 p-4">
-            <input type="file" accept="video/*" onChange={handleVideoUpload} />
-            {videoUrl && (
-                <video
-                    ref={videoRef}
-                    src={videoUrl}
-                    className="w-64 max-w-lg border rounded-md shadow"
-                    crossOrigin="anonymous"
-                    playsInline
-                    muted
-                    controls
-                />
-            )}
-            <canvas ref={canvasRef} className="hidden" />
-            {/* Analog capture control: Capture from the current playing frame */}
+        <div className="p-4 space-y-4">
+            <video
+                ref={videoRef}
+                controls
+                src={videoUrl}
+                className="w-full max-w-xl rounded shadow"
+            />
             <button
-                onClick={handleAnalogCapture}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition w-max"
+                onClick={captureCurrentFrame}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
                 Capture Current Frame
             </button>
-            <div className="flex items-center gap-4">
-                <label className="flex flex-col text-sm">
-                    Capture at (seconds):
-                    <input
-                        type="number"
-                        value={timestamp}
-                        onChange={(e) => setTimestamp(Number(e.target.value))}
-                        min={0}
-                        step={0.1}
-                        className="border px-2 py-1 rounded mt-1 w-24"
-                    />
-                </label>
-                <button
-                    onClick={handleCustomCapture}
-                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition"
-                >
-                    Capture at Timestamp
-                </button>
-            </div>
 
-            {thumbnail && (
-                <div className="space-y-2 mt-4">
-                    <p className="font-medium">
-                        Generated Thumbnail (1200×630):
-                    </p>
-                    <img
-                        src={thumbnail}
-                        alt="Thumbnail"
-                        className="border rounded shadow max-w-full"
+            {capturedImage && showCropper && (
+                <div className="relative w-full h-[400px]">
+                    <Cropper
+                        image={capturedImage}
+                        crop={crop}
+                        zoom={zoom}
+                        aspect={1200 / 630}
+                        onCropChange={setCrop}
+                        onZoomChange={setZoom}
+                        onCropComplete={onCropComplete}
                     />
                 </div>
             )}
+
+            {capturedImage && showCropper && (
+                <button
+                    onClick={generateThumbnail}
+                    className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                    Generate Thumbnail
+                </button>
+            )}
+            {thumbnailSrc && (
+                <div>
+                    <h3 className="font-semibold">Generated Thumbnail:</h3>
+                    <img
+                        src={thumbnailSrc}
+                        alt="Generated Thumbnail"
+                        className="w-[300px] border rounded shadow"
+                    />
+                </div>
+            )}
+
+            <canvas ref={canvasRef} style={{ display: "none" }} />
         </div>
     );
 }
